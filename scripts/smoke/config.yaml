@@ -1,0 +1,8 @@
+# Smoke-test configuration (scripts/smoke-test.sh). The clamd socket comes
+# from --clamd-socket.
+settings:
+  fail_action: allow
+body:
+  content_types:
+    - application/zip
+    - application/octet-stream
