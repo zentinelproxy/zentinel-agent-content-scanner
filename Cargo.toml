@@ -1,6 +1,6 @@
 [package]
 name = "zentinel-agent-content-scanner"
-version = "0.2.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Zentinel Core Team"]
 description = "Content Scanner agent for Zentinel - malware scanning with ClamAV"

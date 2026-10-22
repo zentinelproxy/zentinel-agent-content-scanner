@@ -38,7 +38,7 @@ You need a running `clamd` (see [ClamAV](#clamav) below).
 ```bash
 zentinel bundle install content-scanner
 zentinel-content-scanner-agent --example-config > config.yaml
-zentinel-content-scanner-agent --config config.yaml --grpc-address 127.0.0.1:50051
+zentinel-content-scanner-agent --config config.yaml --socket /tmp/zentinel-content-scanner.sock
 ```
 
 ```kdl
@@ -61,7 +61,7 @@ upstreams {
 
 agents {
     agent "content-scanner" type="custom" {
-        grpc "http://127.0.0.1:50051"
+        unix-socket "/tmp/zentinel-content-scanner.sock"
         events "request_headers" "request_body"
         request-body-mode "buffer"
         max-request-body-bytes 52428800
@@ -86,7 +86,9 @@ routes {
 }
 ```
 
-Check it with the EICAR test string, which every antivirus engine detects:
+Check it with the EICAR test string, which every antivirus engine detects
+(this needs a Zentinel that sends request bodies to agents, see
+[Zentinel versions](#zentinel-versions)):
 
 ```bash
 # clean: forwarded to the upstream
@@ -134,20 +136,22 @@ in `clamd.conf`; point `clamd.socket_path` at it.
 
 ## Configuration
 
-The agent reads a YAML file and two flags. It also accepts configuration over the
+The agent reads a YAML file and the flags below. It also accepts configuration over the
 protocol (`on_configure`), but only validates it and keeps running with the file it
 started with, and Zentinel 0.6.50 does not forward an `agent { config { ... } }`
 block anyway, so set everything in the file.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `-c`, `--config` | `config.yaml` | Path to the YAML configuration file. The file must exist. |
-| `-g`, `--grpc-address` | `0.0.0.0:50051` | gRPC address to listen on. Env `CONTENT_SCANNER_GRPC_ADDRESS`. The default listens on all interfaces; bind to `127.0.0.1` when the proxy runs on the same host. |
+| `-c`, `--config` | `config.yaml` if it exists, else built-in defaults | Path to the YAML configuration file. Env `CONTENT_SCANNER_CONFIG`. A file named with this flag must exist. |
+| `-s`, `--socket` | `/tmp/zentinel-content-scanner.sock` | Unix socket to serve agent protocol v2 on. Env `AGENT_SOCKET`. |
+| `-g`, `--grpc-address` | unset | Serve gRPC on this address (e.g. `127.0.0.1:50051`) instead of the Unix socket; the proxy then connects with `grpc "http://..."`. Env `CONTENT_SCANNER_GRPC_ADDRESS`. |
+| `--clamd-socket` | | Overrides `clamd.socket_path`. Env `CLAMD_SOCKET`. |
 | `--example-config` | | Print an example configuration and exit. |
 | `--validate` | | Load and validate the configuration, then exit. |
 
-The agent serves gRPC only; there is no Unix socket listener, so use `grpc` in the
-proxy's `agent` block.
+Up to 0.4.0 (whose binary was built from 0.2.0 code) the agent served gRPC
+only, on `0.0.0.0:50051` by default, and would not start without `config.yaml`.
 
 Configuration file:
 
@@ -211,6 +215,21 @@ Full reference: <https://registry.zentinelproxy.io/content-scanner/>
   `content_scanner_in_flight_requests`. Health turns `degraded` while `clamd` is
   unreachable.
 
+### Zentinel versions
+
+Every scan decision is made in the request-body phase, so what the agent can
+do depends on the proxy:
+
+- Zentinel 26.10_7 (0.6.50) sends request bodies to agents only when the
+  config has a `waf` block, and rejects a `waf` block whose mode is not `off`.
+  In practice the agent sees headers only: it marks excluded content types
+  (`x-scan-skipped: content-type-excluded`) but scans nothing.
+- Zentinel `main` (after zentinelproxy/zentinel#609) sends the body and answers
+  `403` for an infected upload, but has already opened the upstream request,
+  so the upstream receives the request headers (not the body), and the headers
+  the agent sets after a clean scan (`x-content-scanned`, `x-scan-time-ms`) do
+  not reach it.
+
 ## Development
 
 ```bash
@@ -222,6 +241,22 @@ cargo fmt --all --check
 
 Needs stable Rust (CI uses `dtolnay/rust-toolchain@stable`) and `protoc` (CI
 installs `protobuf-compiler`). The tests do not need a running `clamd`.
+
+`scripts/smoke-test.sh` runs the release binary behind a real Zentinel with
+the shared harness (`agent-smoke/smoke.py` from
+[zentinelproxy/.github](https://github.com/zentinelproxy/.github)) and
+`scripts/smoke/config.yaml`. It uses the `clamd` at `CLAMD_SOCKET` if set,
+otherwise `scripts/smoke/fake-clamd.py`, which recognises only EICAR. It
+checks that an ordinary request is forwarded unmarked, a `text/plain` upload
+is forwarded with `x-scan-skipped: content-type-excluded`, a clean upload is
+forwarded, and that stopping the agent changes the answer. CI runs it on
+every push; a release runs it on every platform before anything is
+published. The EICAR case runs only with `SMOKE_BODY_CASES=1`: no Zentinel
+release passes it yet (see [Zentinel versions](#zentinel-versions)).
+
+```bash
+AGENT_SMOKE=../.github/agent-smoke/smoke.py scripts/smoke-test.sh target/release/zentinel-content-scanner-agent ./zentinel
+```
 
 ## Related
 
