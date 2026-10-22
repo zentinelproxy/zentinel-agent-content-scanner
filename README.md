@@ -232,7 +232,7 @@ installs `protobuf-compiler`). The tests do not need a running `clamd`.
 
 ## License
 
-MIT (declared in Cargo.toml; this repository has no LICENSE file yet).
+MIT, see [`LICENSE`](LICENSE).
 
 ---
 
