@@ -136,10 +136,12 @@ in `clamd.conf`; point `clamd.socket_path` at it.
 
 ## Configuration
 
-The agent reads a YAML file and the flags below. It also accepts configuration over the
-protocol (`on_configure`), but only validates it and keeps running with the file it
-started with, and Zentinel 0.6.50 does not forward an `agent { config { ... } }`
-block anyway, so set everything in the file.
+The agent reads a YAML file and the flags below. Zentinel 26.10_8 and later send
+the agent block's `config { }` on every connection (releases up to 0.6.50 never
+did), but the agent only validates it (it must parse and validate as the file's
+structure) and keeps running with the file it started with, so set everything
+in the file. A block that does not validate is rejected, and the proxy then does
+not use the agent (its filters' `failure-mode` applies).
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -220,15 +222,19 @@ Full reference: <https://registry.zentinelproxy.io/content-scanner/>
 Every scan decision is made in the request-body phase, so what the agent can
 do depends on the proxy:
 
-- Zentinel 26.10_7 (0.6.50) sends request bodies to agents only when the
-  config has a `waf` block, and rejects a `waf` block whose mode is not `off`.
-  In practice the agent sees headers only: it marks excluded content types
-  (`x-scan-skipped: content-type-excluded`) but scans nothing.
-- Zentinel `main` (after zentinelproxy/zentinel#609) sends the body and answers
-  `403` for an infected upload, but has already opened the upstream request,
-  so the upstream receives the request headers (not the body), and the headers
-  the agent sets after a clean scan (`x-content-scanned`, `x-scan-time-ms`) do
-  not reach it.
+- Up to Zentinel 26.10_7 (0.6.50), request bodies reached agents only when
+  the config had a `waf` block, and a `waf` block whose mode was not `off` was
+  rejected. In practice the agent saw headers only: it marked excluded content
+  types (`x-scan-skipped: content-type-excluded`) but scanned nothing.
+- From Zentinel 26.10_8, the body goes to every route agent subscribed to
+  `request_body`, with or without a `waf` block (`inspect-request-body #false`
+  keeps it away), and is held back from the upstream until the agent allows
+  it; an infected upload gets `403`. The upstream still receives the request
+  line and headers before the body decision (zentinelproxy/zentinel#608), and
+  the headers the agent sets after a clean scan (`x-content-scanned`,
+  `x-scan-time-ms`) are request-header changes made on the body, after the
+  upstream request's headers have gone out, so they are dropped with a
+  warning and do not reach it.
 
 ## Development
 
